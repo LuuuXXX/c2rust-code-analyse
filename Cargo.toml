@@ -1,0 +1,26 @@
+[package]
+name = "code_analyse"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clang-ast = "0.1.35"
+serde = "1.0.220"
+serde_derive = "1.0.220"
+serde_json = "1.0.99"
+syn = { version = "2.0", features = ["full", "visit", "visit-mut", "extra-traits"] }
+quote = "1.0"
+toml_edit = "0.14"
+memmap2 = "0.9.9"
+hierr = "0.2.4"
+regex = "1.12.2"
+md5 = "0.8"
+walkdir = "2"
+higuard = "0.1.1"
+hiopt = "0.1.0"
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+prettyplease = "0.2"
+filetime = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
