@@ -462,9 +462,29 @@ r#"// 对应__attribute__((weak))弱链接符号.
         type uint32_t = c_uint32_t;
         type uint64_t = c_uint64_t;
         ";
-        let mut c_items = syn::parse_file(c_stddef).unwrap().items;
-        c_items.extend(items);
-        c_items
+        let c_items = syn::parse_file(c_stddef).unwrap().items;
+        // Collect idents already defined in cstddef to avoid duplicates from bindgen output.
+        // Bindgen generates type aliases from C typedefs (e.g. typedef unsigned int uint;),
+        // which would conflict with the canonical cstddef definitions.
+        let cstddef_names: HashSet<proc_macro2::Ident> = c_items
+            .iter()
+            .filter_map(|item| {
+                if let syn::Item::Type(t) = item {
+                    Some(t.ident.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut result = c_items;
+        result.extend(items.into_iter().filter(|item| {
+            if let syn::Item::Type(t) = item {
+                !cstddef_names.contains(&t.ident)
+            } else {
+                true
+            }
+        }));
+        result
     }
 
     fn create_file_directories(&self) -> Result<()> {
@@ -1407,6 +1427,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Write `content` to both `mod.rs` and `mod.normalized` in `mod_dir`,
+    /// matching the production layout that `collect_item_names_from_mod` expects.
+    fn write_mod_files(mod_dir: &Path, content: &str) {
+        fs::write(mod_dir.join("mod.rs"), content).unwrap();
+        fs::write(mod_dir.join("mod.normalized"), content).unwrap();
+    }
+
     fn create_test_rust_structure(temp_dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
         let mod_a = temp_dir.join("rust/src/mod_a");
         let mod_b = temp_dir.join("rust/src/mod_b");
@@ -1554,7 +1581,7 @@ struct OtherStruct {
 }
 "#;
 
-        fs::write(&mod_rs, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1586,7 +1613,7 @@ type MyType = i32;
 type OtherType = f64;
 "#;
 
-        fs::write(&mod_rs, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1644,7 +1671,7 @@ struct KeepStruct {
 }
 "#;
 
-        fs::write(&mod_rs, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1658,6 +1685,53 @@ struct KeepStruct {
         assert!(!result.contains("const MY_CONST"));
         assert!(result.contains("static MY_STATIC"));
         assert!(result.contains("struct KeepStruct"));
+    }
+
+    #[test]
+    fn test_add_cstddef_items_deduplicates_bindgen_types() {
+        // Simulate bindgen output that defines types already present in the cstddef block.
+        // This happens when C headers contain typedefs like `typedef unsigned int uint;`.
+        let bindgen_output = r#"
+pub type uint = ::core::ffi::c_uint;
+pub type ushort = ::core::ffi::c_ushort;
+pub type ulong = ::core::ffi::c_ulong;
+pub struct MyStruct {
+    pub x: u32,
+}
+"#;
+        let items = syn::parse_file(bindgen_output).unwrap().items;
+        let result = Feature::add_cstddef_items(items);
+
+        let type_names: Vec<String> = result
+            .iter()
+            .filter_map(|item| {
+                if let syn::Item::Type(t) = item {
+                    Some(t.ident.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // uint, ushort, ulong should appear exactly once (from the cstddef block)
+        assert_eq!(type_names.iter().filter(|n| n.as_str() == "uint").count(), 1);
+        assert_eq!(
+            type_names.iter().filter(|n| n.as_str() == "ushort").count(),
+            1
+        );
+        assert_eq!(
+            type_names.iter().filter(|n| n.as_str() == "ulong").count(),
+            1
+        );
+        // MyStruct should still be present
+        let has_my_struct = result.iter().any(|item| {
+            if let syn::Item::Struct(s) = item {
+                s.ident.to_string() == "MyStruct"
+            } else {
+                false
+            }
+        });
+        assert!(has_my_struct);
     }
 
     #[test]
