@@ -121,6 +121,7 @@ impl Clone for TypeItem {
     }
 }
 
+#[derive(Default)]
 struct Duplicates {
     named_to_extract: Vec<TypeItem>,
     named_remove_set: HashSet<String>,
@@ -711,6 +712,30 @@ impl Feature {
         }
     }
 
+    /// Returns true if `item` is a glob import of `core::ffi`, `::core::ffi`, or `std::ffi`
+    /// (i.e. `use core::ffi::*;`, `use ::core::ffi::*;`, or `use std::ffi::*;`).
+    fn is_ffi_glob_import(item: &syn::Item) -> bool {
+        let syn::Item::Use(item_use) = item else {
+            return false;
+        };
+        // must be a glob at the leaf
+        let syn::UseTree::Path(root) = &item_use.tree else {
+            return false;
+        };
+        // accept leading `::` (global path) or no leading `::`
+        let crate_name = root.ident.to_string();
+        if crate_name != "core" && crate_name != "std" {
+            return false;
+        }
+        let syn::UseTree::Path(ffi_seg) = root.tree.as_ref() else {
+            return false;
+        };
+        if ffi_seg.ident != "ffi" {
+            return false;
+        }
+        matches!(ffi_seg.tree.as_ref(), syn::UseTree::Glob(_))
+    }
+
     fn update_lib_rs(
         src_2: &Path,
         duplicates: &mut Duplicates,
@@ -722,6 +747,15 @@ impl Feature {
         let mut lib_rs =
             syn::parse_file(&content).log_err(&format!("parse {}", lib_rs_file.display()))?;
         let lib_items = &mut lib_rs.items;
+
+        // Ensure `use ::core::ffi::*;` is present so that C FFI type aliases
+        // (c_uchar, c_int, …) are in scope for all child modules.
+        if !lib_items.iter().any(Self::is_ffi_glob_import) {
+            let use_ffi: syn::Item = syn::parse_str("use ::core::ffi::*;")
+                .log_err("parse use ::core::ffi::*")?;
+            lib_items.insert(0, use_ffi);
+        }
+
         // c类型，函数都在同一个名字空间.
         let mut used_names = HashSet::new();
         lib_items.iter().for_each(|item| {
@@ -1295,5 +1329,123 @@ mod tests {
 
         assert_eq!(duplicates.named_remove_set.len(), 1);
         assert!(duplicates.named_remove_set.contains("MyStruct"));
+    }
+
+    #[test]
+    fn test_is_ffi_glob_import_matches() {
+        for src in &[
+            "use ::core::ffi::*;",
+            "use core::ffi::*;",
+            "use std::ffi::*;",
+        ] {
+            let item: syn::Item = syn::parse_str(src).unwrap();
+            assert!(Feature::is_ffi_glob_import(&item), "{} should match", src);
+        }
+    }
+
+    #[test]
+    fn test_is_ffi_glob_import_no_match() {
+        for src in &[
+            "use core::ffi::c_int;",
+            "use std::ffi;",
+            "use core::*;",
+            "use super::*;",
+            "use crate::ffi::*;",
+            "mod ffi {}",
+        ] {
+            let item: syn::Item = syn::parse_str(src).unwrap();
+            assert!(!Feature::is_ffi_glob_import(&item), "{} should not match", src);
+        }
+    }
+
+    #[test]
+    fn test_update_lib_rs_inserts_ffi_import() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Set up: rust/src/lib.rs (no ffi import), rust/src.2/ directory
+        let src_dir = temp_dir.path().join("src");
+        let src_2_dir = temp_dir.path().join("src.2");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&src_2_dir).unwrap();
+
+        let lib_rs_src = src_dir.join("lib.rs");
+        fs::write(
+            &lib_rs_src,
+            "#![allow(unused_imports)]\nmod mod_cJSON;\n",
+        )
+        .unwrap();
+
+        let mut duplicates = Duplicates::default();
+        Feature::update_lib_rs(&src_2_dir, &mut duplicates, &None).unwrap();
+
+        let out = fs::read_to_string(src_2_dir.join("lib.rs")).unwrap();
+        assert!(
+            out.contains("use ::core::ffi::*"),
+            "output should contain `use ::core::ffi::*`; got:\n{out}"
+        );
+        // Must appear exactly once
+        assert_eq!(
+            out.matches("use ::core::ffi::*").count(),
+            1,
+            "import should appear exactly once"
+        );
+    }
+
+    #[test]
+    fn test_update_lib_rs_idempotent_with_existing_import() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let src_dir = temp_dir.path().join("src");
+        let src_2_dir = temp_dir.path().join("src.2");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&src_2_dir).unwrap();
+
+        // lib.rs already has the import
+        let lib_rs_src = src_dir.join("lib.rs");
+        fs::write(
+            &lib_rs_src,
+            "#![allow(unused_imports)]\nuse ::core::ffi::*;\nmod mod_cJSON;\n",
+        )
+        .unwrap();
+
+        let mut duplicates = Duplicates::default();
+        Feature::update_lib_rs(&src_2_dir, &mut duplicates, &None).unwrap();
+
+        let out = fs::read_to_string(src_2_dir.join("lib.rs")).unwrap();
+        assert!(
+            out.contains("use ::core::ffi::*"),
+            "output should contain `use ::core::ffi::*`"
+        );
+        assert_eq!(
+            out.matches("use ::core::ffi::*").count(),
+            1,
+            "import should appear exactly once (idempotent)"
+        );
+    }
+
+    #[test]
+    fn test_update_lib_rs_idempotent_with_core_ffi_import() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let src_dir = temp_dir.path().join("src");
+        let src_2_dir = temp_dir.path().join("src.2");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&src_2_dir).unwrap();
+
+        // lib.rs has `use core::ffi::*;` (no leading `::`)
+        let lib_rs_src = src_dir.join("lib.rs");
+        fs::write(
+            &lib_rs_src,
+            "#![allow(unused_imports)]\nuse core::ffi::*;\nmod mod_cJSON;\n",
+        )
+        .unwrap();
+
+        let mut duplicates = Duplicates::default();
+        Feature::update_lib_rs(&src_2_dir, &mut duplicates, &None).unwrap();
+
+        let out = fs::read_to_string(src_2_dir.join("lib.rs")).unwrap();
+        // No duplicate import should be inserted
+        let ffi_count = out.matches("ffi::*").count();
+        assert_eq!(ffi_count, 1, "should have exactly one ffi::* glob; got:\n{out}");
     }
 }
