@@ -1,0 +1,14 @@
+/home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/deps/serde-09072425983d6e8d.d: /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/build/serde-c43bd1b4f7af5940/out/private.rs
+
+/home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/deps/libserde-09072425983d6e8d.rlib: /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/build/serde-c43bd1b4f7af5940/out/private.rs
+
+/home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/deps/libserde-09072425983d6e8d.rmeta: /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/build/serde-c43bd1b4f7af5940/out/private.rs
+
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/build/serde-c43bd1b4f7af5940/out/private.rs:
+
+# env-dep:OUT_DIR=/home/runner/work/c2rust-code-analyse/c2rust-code-analyse/target/debug/build/serde-c43bd1b4f7af5940/out
