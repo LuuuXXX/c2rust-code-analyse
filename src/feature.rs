@@ -463,14 +463,14 @@ r#"// 对应__attribute__((weak))弱链接符号.
         type uint64_t = c_uint64_t;
         ";
         let c_items = syn::parse_file(c_stddef).unwrap().items;
-        // Collect names already defined in cstddef to avoid duplicates from bindgen output.
+        // Collect idents already defined in cstddef to avoid duplicates from bindgen output.
         // Bindgen generates type aliases from C typedefs (e.g. typedef unsigned int uint;),
         // which would conflict with the canonical cstddef definitions.
-        let cstddef_names: HashSet<String> = c_items
+        let cstddef_names: HashSet<proc_macro2::Ident> = c_items
             .iter()
             .filter_map(|item| {
                 if let syn::Item::Type(t) = item {
-                    Some(t.ident.to_string())
+                    Some(t.ident.clone())
                 } else {
                     None
                 }
@@ -479,7 +479,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         let mut result = c_items;
         result.extend(items.into_iter().filter(|item| {
             if let syn::Item::Type(t) = item {
-                !cstddef_names.contains(&t.ident.to_string())
+                !cstddef_names.contains(&t.ident)
             } else {
                 true
             }
@@ -1427,6 +1427,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Write `content` to both `mod.rs` and `mod.normalized` in `mod_dir`,
+    /// matching the production layout that `collect_item_names_from_mod` expects.
+    fn write_mod_files(mod_dir: &Path, content: &str) {
+        fs::write(mod_dir.join("mod.rs"), content).unwrap();
+        fs::write(mod_dir.join("mod.normalized"), content).unwrap();
+    }
+
     fn create_test_rust_structure(temp_dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
         let mod_a = temp_dir.join("rust/src/mod_a");
         let mod_b = temp_dir.join("rust/src/mod_b");
@@ -1574,9 +1581,7 @@ struct OtherStruct {
 }
 "#;
 
-        let mod_normalized = mod_dir.join("mod.normalized");
-        fs::write(&mod_rs, mod_content).unwrap();
-        fs::write(&mod_normalized, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1608,9 +1613,7 @@ type MyType = i32;
 type OtherType = f64;
 "#;
 
-        let mod_normalized = mod_dir.join("mod.normalized");
-        fs::write(&mod_rs, mod_content).unwrap();
-        fs::write(&mod_normalized, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1668,9 +1671,7 @@ struct KeepStruct {
 }
 "#;
 
-        let mod_normalized = mod_dir.join("mod.normalized");
-        fs::write(&mod_rs, mod_content).unwrap();
-        fs::write(&mod_normalized, mod_content).unwrap();
+        write_mod_files(&mod_dir, mod_content);
         fs::write(&target_rs, target_content).unwrap();
 
         let mut ast = syn::parse_file(&fs::read_to_string(&target_rs).unwrap()).unwrap();
@@ -1725,7 +1726,7 @@ pub struct MyStruct {
         // MyStruct should still be present
         let has_my_struct = result.iter().any(|item| {
             if let syn::Item::Struct(s) = item {
-                s.ident == "MyStruct"
+                s.ident.to_string() == "MyStruct"
             } else {
                 false
             }
