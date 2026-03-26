@@ -211,7 +211,7 @@ impl Kind {
             return Ok(code);
         }
 
-        if !self.is_static() {
+        if !self.is_static() && !self.is_inline() {
             return Ok(code);
         }
 
@@ -247,7 +247,7 @@ impl Kind {
     }
 
     fn rename_macro(&self) -> Option<String> {
-        if !self.is_static() {
+        if !self.is_static() && !self.is_inline() {
             return None;
         }
         let Some(global_name) = self.global_name() else {
@@ -641,7 +641,7 @@ impl File {
     fn rename_static_symbols(node: &mut Node, md5: &str) -> bool {
         let mut has_static = false;
         for child in &mut node.inner {
-            if !child.kind.is_static() {
+            if !child.kind.is_static() && !child.kind.is_inline() {
                 continue;
             }
             let Some(name) = child.kind.name() else {
