@@ -224,7 +224,12 @@ impl Kind {
         code.replace_range(beg..end, global_name);
 
         // 构建工具可能控制缺省可见性，这里需要显示增加
-        code.insert_str(0, "__attribute__((visibility(\"default\"))) ");
+        // 但如果原代码里已经带有 visibility/ __visibility__，再插会导致 clang 报
+        // "visibility does not match previous declaration"
+        let has_visibility = code.contains("__visibility__") || code.contains("visibility(\"");
+        if !has_visibility {
+            code.insert_str(0, "__attribute__((visibility(\"default\"))) ");
+        }
 
         let re = regex::Regex::new(r"^static\s|\sstatic\s").map_err(|_| Error::inval())?;
         if let Some(m) = re.find(&code) {
