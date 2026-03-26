@@ -102,6 +102,13 @@ fn remove_unused_attrs(code: &mut String) {
         off += m.start();
         code.replace_range(off..off + m.len(), "");
     }
+    // __gnu_inline__ 在某些场景（尤其是声明）会被编译器忽略，从而触发 -Werror=attributes
+    let mut off = 0;
+    let re = regex::Regex::new(r"__attribute__\s*\(\s*\(\s*[^)]*__gnu_inline__[^)]*\)\s*\)").unwrap();
+    while let Some(m) = re.find(&code[off..]) {
+        off += m.start();
+        code.replace_range(off..off + m.len(), "");
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -224,12 +231,9 @@ impl Kind {
         code.replace_range(beg..end, global_name);
 
         // 构建工具可能控制缺省可见性，这里需要显示增加
-        // 但如果原代码里已经带有 visibility/ __visibility__，再插会导致 clang 报
-        // "visibility does not match previous declaration"
-        let has_visibility = code.contains("__visibility__") || code.contains("visibility(\"");
-        if !has_visibility {
-            code.insert_str(0, "__attribute__((visibility(\"default\"))) ");
-        }
+        // 但必须先清理掉原本的 hidden/default 等，避免冲突
+        strip_visibility_attrs(&mut code)?;
+        code.insert_str(0, "__attribute__((visibility(\"default\"))) ");
 
         let re = regex::Regex::new(r"^static\s|\sstatic\s").map_err(|_| Error::inval())?;
         if let Some(m) = re.find(&code) {
@@ -382,6 +386,28 @@ fn name_range(loc: &SourceLocation, range: &SourceRange) -> (usize, usize) {
     };
     let offset = name_loc.offset - beg_loc.offset;
     (offset, offset + name_loc.tok_len)
+}
+
+fn strip_visibility_attrs(code: &mut String) -> Result<()> {
+    // 删除 __attribute__((__visibility__("...")))
+    let re = regex::Regex::new(
+        r#"__attribute__\s*\(\s*\(\s*__visibility__\s*\(\s*"[^"]*"\s*\)\s*\)\s*\)\s*"#,
+    )
+    .map_err(|_| Error::inval())?;
+    while let Some(m) = re.find(code) {
+        code.replace_range(m.start()..m.end(), "");
+    }
+
+    // 删除 __attribute__((visibility("...")))
+    let re = regex::Regex::new(
+        r#"__attribute__\s*\(\s*\(\s*visibility\s*\(\s*"[^"]*"\s*\)\s*\)\s*\)\s*"#,
+    )
+    .map_err(|_| Error::inval())?;
+    while let Some(m) = re.find(code) {
+        code.replace_range(m.start()..m.end(), "");
+    }
+
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
