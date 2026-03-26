@@ -724,6 +724,38 @@ impl File {
         Ok(format!("{:x}", digest))
     }
 
+    // 同名 FunctionDecl：只要其中一个 inline=true，则同名全部 inline=true
+    fn normalize_inline_flags(node: &mut Node) {
+        use std::collections::HashMap;
+
+        // name(String) -> any_inline
+        let mut any_inline: HashMap<String, bool> = HashMap::new();
+
+        // first pass: collect whether any inline=true exists for each name
+        for child in &node.inner {
+            let Kind::FunctionDecl(ref f) = child.kind else {
+                continue;
+            };
+
+            // entry 默认 false；出现 true 就置 true（并保持 true）
+            let e = any_inline.entry(f.name.clone()).or_insert(false);
+            if f.inline {
+                *e = true;
+            }
+        }
+
+        // second pass: write back unified inline flag
+        for child in &mut node.inner {
+            let Kind::FunctionDecl(ref mut f) = child.kind else {
+                continue;
+            };
+
+            if any_inline.get(&f.name) == Some(&true) {
+                f.inline = true;
+            }
+        }
+    }
+
     fn init_line_info(node: &mut Node) {
         if node.inner.is_empty() {
             return;
@@ -780,6 +812,7 @@ impl File {
             }
         }
         node.inner.retain(|node| !node.kind.skip());
+        Self::normalize_inline_flags(node);
     }
 
     fn init_vars(node: &mut Node) {
