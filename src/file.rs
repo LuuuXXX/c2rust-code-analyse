@@ -410,6 +410,17 @@ fn strip_visibility_attrs(code: &mut String) -> Result<()> {
     Ok(())
 }
 
+fn ensure_extern_decl(code: &mut String) -> Result<()> {
+    let has_extern = regex::Regex::new(r"(^|[^\w])extern([^\w]|$)")
+        .map_err(|_| Error::inval())?
+        .is_match(code);
+
+    if !has_extern {
+        code.insert_str(0, "extern ");
+    }
+    Ok(())
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct TranslationUnitDecl {
     md5: Option<String>,
@@ -930,10 +941,7 @@ impl File {
                         code.drain(pos..);
                         code.push(';');
                     }
-                    let trimmed = code.trim_start();
-                    if !trimmed.starts_with("extern ") {
-                        code.insert_str(0, "extern ");
-                    }
+                    ensure_extern_decl(&mut code)?;
                 }
                 // 全局变量可能是static int g_i32[] = { ... }
                 // 数组大小只能从var.ty中提取.
@@ -941,7 +949,7 @@ impl File {
                     if let Some(pos) = code.find('=') {
                         code.drain(pos..);
                     }
-                    code.insert_str(0, "extern ");
+                    ensure_extern_decl(&mut code)?;
                     var.ty.fill_array_size(&mut code)?;
                 }
             }
