@@ -930,7 +930,10 @@ impl File {
                         code.drain(pos..);
                         code.push(';');
                     }
-                    code.insert_str(0, "extern ");
+                    let trimmed = code.trim_start();
+                    if !trimmed.starts_with("extern ") {
+                        code.insert_str(0, "extern ");
+                    }
                 }
                 // 全局变量可能是static int g_i32[] = { ... }
                 // 数组大小只能从var.ty中提取.
