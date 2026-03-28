@@ -235,7 +235,9 @@ impl Feature {
                 };
 
                 if not_empty {
-                    translated.insert(Self::normalize_name(&name).to_string(), prefixed_name);
+                    let normalized = Self::normalize_name(&name);
+                    let should_reexport = name == normalized;
+                    translated.insert(normalized.to_string(), (prefixed_name, should_reexport));
                 }
 
                 let has_committed = node.kind.has_committed();
@@ -727,7 +729,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         Ok(())
     }
 
-    fn update_mod_rs(mod_dir: &Path, translated: HashMap<String, String>) -> Result<()> {
+    fn update_mod_rs(mod_dir: &Path, translated: HashMap<String, (String, bool)>) -> Result<()> {
         let mod_rs = mod_dir.join("mod.rs");
         // 需要从备份文件中读取完整信息
         let normalized_rs = mod_rs.with_extension("normalized");
@@ -750,9 +752,11 @@ r#"// 对应__attribute__((weak))弱链接符号.
             });
         }
         let mut modules = Vec::new();
-        for module in translated.values() {
+        for (module, should_reexport) in translated.values() {
             modules.push(syn::parse_str(&format!("mod {module};")).unwrap());
-            modules.push(syn::parse_str(&format!("pub use {module}::*;")).unwrap());
+            if *should_reexport {
+                modules.push(syn::parse_str(&format!("pub use {module}::*;")).unwrap());
+            }
         }
         ast.items.extend(modules);
 
@@ -761,7 +765,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         Ok(())
     }
 
-    fn mod_rs_needs_sync(mod_dir: &Path, translated: &HashMap<String, String>) -> Result<bool> {
+    fn mod_rs_needs_sync(mod_dir: &Path, translated: &HashMap<String, (String, bool)>) -> Result<bool> {
         let mod_rs = mod_dir.join("mod.rs");
         if !mod_rs.exists() {
             return Ok(true);
@@ -770,7 +774,12 @@ r#"// 对应__attribute__((weak))弱链接符号.
         let content = fs::read_to_string(&mod_rs).log_err(&format!("read {}", mod_rs.display()))?;
         let ast = syn::parse_file(&content).log_err(&format!("parse {}", mod_rs.display()))?;
 
-        let expected: HashSet<String> = translated.values().cloned().collect();
+        let expected_mods: HashSet<String> = translated.values().map(|(m, _)| m.clone()).collect();
+        let expected_pub_uses: HashSet<String> = translated
+            .values()
+            .filter(|(_, should_reexport)| *should_reexport)
+            .map(|(m, _)| m.clone())
+            .collect();
         let mut actual_mods = HashSet::new();
         let mut actual_pub_uses = HashSet::new();
 
@@ -794,7 +803,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
             }
         }
 
-        Ok(actual_mods != expected || actual_pub_uses != expected)
+        Ok(actual_mods != expected_mods || actual_pub_uses != expected_pub_uses)
     }
 
     fn extract_pub_use_module_name(tree: &syn::UseTree) -> Option<String> {
