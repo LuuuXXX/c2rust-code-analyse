@@ -1189,9 +1189,14 @@ r#"// 对应__attribute__((weak))弱链接符号.
                     .unwrap(),
             );
         }
-        if !matches!(main_item.vis, syn::Visibility::Public(_)) {
+        let expected_vis: syn::Visibility = if link_name != name {
+            syn::parse_str("pub(super)").unwrap()
+        } else {
+            syn::parse_str("pub").unwrap()
+        };
+        if !Self::syn_equal(&main_item.vis, &expected_vis) {
             is_changed = true;
-            main_item.vis = syn::parse_str("pub").unwrap();
+            main_item.vis = expected_vis;
         }
         let updated = Self::update_weak_linkage(&mut main_item.attrs, is_weak_linkage);
         is_changed |= updated;
@@ -1275,9 +1280,14 @@ r#"// 对应__attribute__((weak))弱链接符号.
             main_item.mutability = syn::parse_str("mut").unwrap();
         }
 
-        if !matches!(main_item.vis, syn::Visibility::Public(_)) {
+        let expected_vis: syn::Visibility = if link_name != name {
+            syn::parse_str("pub(super)").unwrap()
+        } else {
+            syn::parse_str("pub").unwrap()
+        };
+        if !Self::syn_equal(&main_item.vis, &expected_vis) {
             is_changed = true;
-            main_item.vis = syn::parse_str("pub").unwrap();
+            main_item.vis = expected_vis;
         }
         let updated = Self::update_weak_linkage(&mut main_item.attrs, is_weak_linkage);
         is_changed |= updated;
