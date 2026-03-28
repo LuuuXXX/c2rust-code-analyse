@@ -1194,7 +1194,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         } else {
             syn::parse_str("pub").unwrap()
         };
-        if main_item.vis != expected_vis {
+        if !Self::syn_equal(&main_item.vis, &expected_vis) {
             is_changed = true;
             main_item.vis = expected_vis;
         }
@@ -1285,7 +1285,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         } else {
             syn::parse_str("pub").unwrap()
         };
-        if main_item.vis != expected_vis {
+        if !Self::syn_equal(&main_item.vis, &expected_vis) {
             is_changed = true;
             main_item.vis = expected_vis;
         }
