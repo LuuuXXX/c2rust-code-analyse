@@ -159,7 +159,7 @@ impl Kind {
             _ => None,
         }
     }
-    fn set_skip(&mut self) {
+    pub fn set_skip(&mut self) {
         match self {
             Kind::EnumDecl(ref mut item) => item.skip = true,
             Kind::RecordDecl(ref mut item) => item.skip = true,
@@ -194,6 +194,16 @@ impl Kind {
 
     pub fn is_fun_declare(&self, inner: &[Node]) -> bool {
         !inner.iter().any(|e| matches!(e.kind, Kind::CompoundStmt))
+    }
+
+    /// 是否弱链接函数 (__attribute__((weak)))
+    pub fn is_weak_fn(&self, inner: &[Node]) -> bool {
+        if !matches!(self, Kind::FunctionDecl(_)) {
+            return false;
+        }
+        inner
+            .iter()
+            .any(|n| matches!(&n.kind, Kind::Other(o) if o.kind.as_deref() == Some("WeakAttr")))
     }
 
     pub fn is_const_var(&self) -> bool {
@@ -888,6 +898,21 @@ impl File {
         &mut self.node.inner
     }
 
+    /// 删除标记为 skip 的顶层节点（用于全局分析后清理弱符号重复定义）
+    pub fn remove_skipped(&mut self) {
+        self.node.inner.retain(|n| !n.kind.skip());
+    }
+
+    /// 测试专用构造函数：直接从节点和路径创建 File 实例
+    #[cfg(test)]
+    pub(crate) fn new_for_test(node: Node, path: PathBuf) -> Self {
+        Self {
+            node,
+            path,
+            loaded_from_json: false,
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -971,6 +996,62 @@ impl File {
         }
         remove_unused_attrs(&mut content);
         Ok(content)
+    }
+}
+
+/// 测试辅助函数，用于跨模块测试场景（feature.rs 等）
+#[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::*;
+
+    pub(crate) fn make_fn_definition_node(name: &str, is_weak: bool) -> Node {
+        let mut inner = vec![];
+        if is_weak {
+            inner.push(Node {
+                id: clang_ast::Id::NULL,
+                kind: Kind::Other(OtherDecl {
+                    kind: Some("WeakAttr".to_string()),
+                }),
+                inner: vec![],
+            });
+        }
+        // CompoundStmt 使 is_fun_declare 返回 false（即该节点是函数定义）
+        inner.push(Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::CompoundStmt,
+            inner: vec![],
+        });
+        Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::FunctionDecl(FunctionDecl {
+                name: name.to_string(),
+                loc: SourceLocation::default(),
+                range: SourceRange::default(),
+                is_definition: true,
+                is_implicit: false,
+                inline: false,
+                ty: MyClangType {
+                    qual_type: "void ()".to_string(),
+                    desugared_qual_type: None,
+                },
+                storage_class: None,
+                git_commit: false,
+                global_name: None,
+                skip: false,
+            }),
+            inner,
+        }
+    }
+
+    pub(crate) fn make_translation_unit(children: Vec<Node>) -> Node {
+        Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::TranslationUnitDecl(TranslationUnitDecl {
+                md5: None,
+                git_commit: false,
+            }),
+            inner: children,
+        }
     }
 }
 
@@ -1325,5 +1406,95 @@ mod tests {
         let mut code = "const int name [5] [10]".to_string();
         ty.fill_array_size(&mut code).unwrap();
         assert_eq!(code, "const int name [5] [10]");
+    }
+
+    fn make_weak_attr_node() -> Node {
+        Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::Other(OtherDecl {
+                kind: Some("WeakAttr".to_string()),
+            }),
+            inner: vec![],
+        }
+    }
+
+    fn make_weak_function_node(name: &str) -> Node {
+        Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::FunctionDecl(FunctionDecl {
+                name: name.to_string(),
+                loc: SourceLocation::default(),
+                range: SourceRange::default(),
+                is_definition: true,
+                is_implicit: false,
+                inline: false,
+                ty: MyClangType {
+                    qual_type: "void ()".to_string(),
+                    desugared_qual_type: None,
+                },
+                storage_class: None,
+                git_commit: false,
+                global_name: None,
+                skip: false,
+            }),
+            inner: vec![make_weak_attr_node()],
+        }
+    }
+
+    #[test]
+    fn test_is_weak_fn_with_weak_attr() {
+        let node = make_weak_function_node("foo");
+        assert!(node.kind.is_weak_fn(&node.inner));
+    }
+
+    #[test]
+    fn test_is_weak_fn_without_weak_attr() {
+        let node = make_non_static_function_node("foo");
+        assert!(!node.kind.is_weak_fn(&node.inner));
+    }
+
+    #[test]
+    fn test_is_weak_fn_non_function_kind() {
+        let node = make_static_var_node("bar");
+        assert!(!node.kind.is_weak_fn(&node.inner));
+    }
+
+    #[test]
+    fn test_is_weak_fn_other_attr_not_weak() {
+        let mut node = make_non_static_function_node("foo");
+        node.inner.push(Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::Other(OtherDecl {
+                kind: Some("NoThrowAttr".to_string()),
+            }),
+            inner: vec![],
+        });
+        assert!(!node.kind.is_weak_fn(&node.inner));
+    }
+
+    #[test]
+    fn test_remove_skipped_removes_skipped_nodes() {
+        let mut root = Node {
+            id: clang_ast::Id::NULL,
+            kind: Kind::TranslationUnitDecl(TranslationUnitDecl {
+                md5: None,
+                git_commit: false,
+            }),
+            inner: vec![
+                make_non_static_function_node("keep"),
+                make_non_static_function_node("remove"),
+            ],
+        };
+        root.inner[1].kind.set_skip();
+
+        let path = std::path::PathBuf::from("/tmp/test.c2rust");
+        let mut file = File {
+            node: root,
+            path,
+            loaded_from_json: false,
+        };
+        file.remove_skipped();
+        assert_eq!(file.iter().len(), 1);
+        assert_eq!(file.iter()[0].kind.name(), Some("keep"));
     }
 }

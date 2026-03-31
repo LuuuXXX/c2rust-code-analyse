@@ -58,6 +58,88 @@ impl Feature {
             }
             self.files.push(File::new(&c_root, path)?);
         }
+        self.skip_duplicate_weak_fns()?;
+        Ok(())
+    }
+
+    /// 全局分析同名函数中的弱链接符号，将重复定义的弱链接函数标记为 skip。
+    ///
+    /// 在 C 代码中，同一个函数可能在多个文件中出现，其中一个（或多个）带有
+    /// `__attribute__((weak))` 弱链接属性。Rust 不允许同名函数重复定义，
+    /// 因此需要在全局范围内忽略弱链接版本，只保留非弱链接版本。
+    fn skip_duplicate_weak_fns(&mut self) -> Result<()> {
+        // 第一遍：统计每个函数名出现的次数（只统计函数定义，不包括声明）
+        let mut fn_counts: HashMap<String, usize> = HashMap::new();
+        for file in self.files.iter() {
+            for node in file.iter() {
+                let crate::Kind::FunctionDecl(_) = &node.kind else {
+                    continue;
+                };
+                if node.kind.is_fun_declare(&node.inner) {
+                    continue;
+                }
+                let Some(name) = node.kind.name() else {
+                    continue;
+                };
+                *fn_counts.entry(name.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        // 第二遍：对出现多次的函数名，将弱链接版本标记为 skip
+        let mut modified = HashSet::new();
+        for (file_idx, file) in self.files.iter().enumerate() {
+            for node in file.iter() {
+                let crate::Kind::FunctionDecl(_) = &node.kind else {
+                    continue;
+                };
+                if node.kind.is_fun_declare(&node.inner) {
+                    continue;
+                }
+                let Some(name) = node.kind.name() else {
+                    continue;
+                };
+                if fn_counts.get(name).copied().unwrap_or(0) > 1
+                    && node.kind.is_weak_fn(&node.inner)
+                {
+                    modified.insert(file_idx);
+                }
+            }
+        }
+
+        // 对需要修改的文件，设置弱符号节点的 skip 标志并保存 JSON
+        for file_idx in modified {
+            let file = &mut self.files[file_idx];
+            let indices: Vec<usize> = file
+                .iter()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, node)| {
+                    let crate::Kind::FunctionDecl(_) = &node.kind else {
+                        return None;
+                    };
+                    if node.kind.is_fun_declare(&node.inner) {
+                        return None;
+                    }
+                    let Some(name) = node.kind.name() else {
+                        return None;
+                    };
+                    if fn_counts.get(name).copied().unwrap_or(0) > 1
+                        && node.kind.is_weak_fn(&node.inner)
+                    {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let nodes = file.iter_mut();
+            for idx in &indices {
+                nodes[*idx].kind.set_skip();
+            }
+            file.remove_skipped();
+            file.save_json()?;
+        }
+
         Ok(())
     }
 
@@ -2029,5 +2111,64 @@ pub struct MyStruct {
         assert!(!src_fun_c.exists());
         let content = fs::read_to_string(&dst_fun_rs).unwrap();
         assert!(content.trim().is_empty());
+    }
+
+    #[test]
+    fn test_skip_duplicate_weak_fns_skips_weak_duplicate() {
+        use crate::file::test_helpers::{make_fn_definition_node, make_translation_unit};
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // file1: non-weak definition of "foo"
+        let path1 = temp_dir.path().join("file1.c2rust");
+        let root1 = make_translation_unit(vec![make_fn_definition_node("foo", false)]);
+
+        // file2: weak definition of "foo"
+        let path2 = temp_dir.path().join("file2.c2rust");
+        let root2 = make_translation_unit(vec![make_fn_definition_node("foo", true)]);
+
+        let mut feature = Feature {
+            root: temp_dir.path().to_path_buf(),
+            prefix: temp_dir.path().to_path_buf(),
+            name: "test".to_string(),
+            files: vec![
+                File::new_for_test(root1, path1),
+                File::new_for_test(root2, path2.clone()),
+            ],
+            fast: false,
+        };
+
+        feature.skip_duplicate_weak_fns().unwrap();
+
+        // file1 should still have "foo" (non-weak)
+        assert_eq!(feature.files[0].iter().len(), 1);
+        assert_eq!(feature.files[0].iter()[0].kind.name(), Some("foo"));
+
+        // file2's "foo" (weak) should be removed
+        assert_eq!(feature.files[1].iter().len(), 0);
+    }
+
+    #[test]
+    fn test_skip_duplicate_weak_fns_keeps_unique_weak_fn() {
+        use crate::file::test_helpers::{make_fn_definition_node, make_translation_unit};
+
+        let temp_dir = TempDir::new().unwrap();
+        let path1 = temp_dir.path().join("file1.c2rust");
+        // "bar" only appears once (weak), should NOT be skipped
+        let root1 = make_translation_unit(vec![make_fn_definition_node("bar", true)]);
+
+        let mut feature = Feature {
+            root: temp_dir.path().to_path_buf(),
+            prefix: temp_dir.path().to_path_buf(),
+            name: "test".to_string(),
+            files: vec![File::new_for_test(root1, path1)],
+            fast: false,
+        };
+
+        feature.skip_duplicate_weak_fns().unwrap();
+
+        // "bar" appears only once, so it should NOT be skipped
+        assert_eq!(feature.files[0].iter().len(), 1);
+        assert_eq!(feature.files[0].iter()[0].kind.name(), Some("bar"));
     }
 }
