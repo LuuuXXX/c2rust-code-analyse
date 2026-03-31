@@ -47,15 +47,16 @@ impl Feature {
 
     fn get_files(&mut self) -> Result<()> {
         let c_root = self.root.join("c");
-        for entry in WalkDir::new(&c_root)
+        // 先收集所有路径并排序，确保处理顺序确定（避免 WalkDir 的平台相关遍历顺序影响结果）
+        let mut paths: Vec<PathBuf> = WalkDir::new(&c_root)
             .min_depth(1)
             .into_iter()
             .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !path.is_file() || path.extension() != Some(OsStr::new("c2rust")) {
-                continue;
-            }
+            .map(|e| e.into_path())
+            .filter(|p| p.is_file() && p.extension() == Some(OsStr::new("c2rust")))
+            .collect();
+        paths.sort();
+        for path in &paths {
             self.files.push(File::new(&c_root, path)?);
         }
         self.skip_duplicate_weak_fns()?;
@@ -67,7 +68,7 @@ impl Feature {
     /// 在 C 代码中，同一个函数可能在多个文件中出现，其中一个（或多个）带有
     /// `__attribute__((weak))` 弱链接属性。Rust 不允许同名函数重复定义，
     /// 因此需要在全局范围内忽略弱链接版本，只保留非弱链接版本。
-    /// 若所有同名定义都是弱链接，则保留第一个（按文件顺序），跳过其余的。
+    /// 若所有同名定义都是弱链接，则保留第一个（按文件路径排序后的顺序），跳过其余的。
     fn skip_duplicate_weak_fns(&mut self) -> Result<()> {
         // 第一遍：统计每个函数名出现的次数，并记录是否存在非弱链接定义
         let mut fn_counts: HashMap<String, usize> = HashMap::new();
@@ -90,13 +91,13 @@ impl Feature {
             }
         }
 
-        // 第二遍：确定哪些文件中的哪些弱符号需要跳过。
+        // 第二遍：精确记录需要跳过的 (file_idx, node_idx) 对。
         // - 若同名函数存在非弱链接定义，则跳过所有弱链接版本。
         // - 若同名函数全部为弱链接（出现多次），则保留第一个，跳过后续的。
-        let mut modified = HashSet::new();
+        let mut skip_nodes: HashSet<(usize, usize)> = HashSet::new();
         let mut weak_seen: HashSet<String> = HashSet::new();
         for (file_idx, file) in self.files.iter().enumerate() {
-            for node in file.iter() {
+            for (node_idx, node) in file.iter().iter().enumerate() {
                 let crate::Kind::FunctionDecl(_) = &node.kind else {
                     continue;
                 };
@@ -113,11 +114,11 @@ impl Feature {
                 // 当前节点是弱链接且同名函数出现多次
                 if has_non_weak.contains(name) {
                     // 存在非弱链接版本 → 跳过所有弱链接版本
-                    modified.insert(file_idx);
+                    skip_nodes.insert((file_idx, node_idx));
                 } else {
-                    // 全部为弱链接 → 保留第一个，跳过后续的
+                    // 全部为弱链接 → 保留第一个（按路径排序后的文件顺序），跳过后续的
                     if weak_seen.contains(name) {
-                        modified.insert(file_idx);
+                        skip_nodes.insert((file_idx, node_idx));
                     } else {
                         weak_seen.insert(name.to_string());
                     }
@@ -125,35 +126,13 @@ impl Feature {
             }
         }
 
-        // 对需要修改的文件，设置弱符号节点的 skip 标志并保存 JSON
-        for file_idx in modified {
+        // 第三遍：按文件分组需要 skip 的节点索引，设置标志并保存 JSON
+        let mut by_file: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (file_idx, node_idx) in skip_nodes {
+            by_file.entry(file_idx).or_default().push(node_idx);
+        }
+        for (file_idx, indices) in by_file {
             let file = &mut self.files[file_idx];
-            let indices: Vec<usize> = file
-                .iter()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, node)| {
-                    let crate::Kind::FunctionDecl(_) = &node.kind else {
-                        return None;
-                    };
-                    if node.kind.is_fun_declare(&node.inner) {
-                        return None;
-                    }
-                    let Some(name) = node.kind.name() else {
-                        return None;
-                    };
-                    let count = fn_counts.get(name).copied().unwrap_or(0);
-                    if count <= 1 || !node.kind.is_weak_fn(&node.inner) {
-                        return None;
-                    }
-                    // 有非弱链接版本：直接跳过弱链接
-                    if has_non_weak.contains(name) {
-                        return Some(i);
-                    }
-                    // 全弱链接重复：文件内第一个之后的（weak_seen 已在上方第二遍确认）
-                    Some(i)
-                })
-                .collect();
             let nodes = file.iter_mut();
             for idx in &indices {
                 nodes[*idx].kind.set_skip();
