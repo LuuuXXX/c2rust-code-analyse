@@ -898,7 +898,7 @@ impl File {
         &mut self.node.inner
     }
 
-    /// 删除标记为 skip 的顶层节点（用于全局分析后清理弱符号重复定义）
+    /// 删除 `kind.skip()` 返回 true 的顶层节点（用于全局分析后清理弱符号重复定义）
     pub fn remove_skipped(&mut self) {
         self.node.inner.retain(|n| !n.kind.skip());
     }
