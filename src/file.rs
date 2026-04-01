@@ -102,9 +102,9 @@ fn remove_unused_attrs(code: &mut String) {
         off += m.start();
         code.replace_range(off..off + m.len(), "");
     }
-    // __gnu_inline__ 在某些场景（尤其是声明）会被编译器忽略，从而触发 -Werror=attributes
+    // inline 在某些场景（尤其是声明）会被编译器忽略，从而触发 -Werror=attributes
     let mut off = 0;
-    let re = regex::Regex::new(r"__attribute__\s*\(\s*\(\s*[^)]*__gnu_inline__[^)]*\)\s*\)").unwrap();
+    let re = regex::Regex::new(r"__attribute__\s*\(\s*\(\s*[^)]*inline[^)]*\)\s*\)").unwrap();
     while let Some(m) = re.find(&code[off..]) {
         off += m.start();
         code.replace_range(off..off + m.len(), "");
