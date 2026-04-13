@@ -636,6 +636,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
                 .log_err(&format!("write {}", c_file.display()))?;
             let decl_file = Self::decl_filename(&name);
             let decl_file = mod_dir.join(decl_file);
+            let decl = Self::postprocess_decl(&decl);
             let _ =
                 fs::write(&decl_file, decl).log_err(&format!("write {}", decl_file.display()))?;
         }
@@ -955,6 +956,12 @@ r#"// 对应__attribute__((weak))弱链接符号.
         }
         visit_file(&mut visitor, &ast);
         Ok(visitor.0)
+    }
+
+    // 对decl_文件内容进行后处理，用正则把link_name替换成export_name
+    fn postprocess_decl(content: &str) -> String {
+        let re = Regex::new(r"\blink_name\b").unwrap();
+        re.replace_all(content, "export_name").into_owned()
     }
 
     // 获取File对应的mod目录名
