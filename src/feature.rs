@@ -708,7 +708,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
         impl Visitor<'_> {
             fn foreign_item_attrs(name: &str) -> Vec<syn::Attribute> {
                 syn::Attribute::parse_outer
-                    .parse_str(&format!("#[allow(warnings)]\n#[export_name = \"{}\"]", name))
+                    .parse_str(&format!("#[allow(warnings)]\n#[link_name = \"{}\"]", name))
                     .unwrap()
             }
 
