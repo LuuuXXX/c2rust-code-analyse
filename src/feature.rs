@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::OnceLock;
 use syn::{
     parse::Parser,
     spanned::Spanned,
@@ -636,6 +637,11 @@ r#"// 对应__attribute__((weak))弱链接符号.
                 .log_err(&format!("write {}", c_file.display()))?;
             let decl_file = Self::decl_filename(&name);
             let decl_file = mod_dir.join(decl_file);
+            let decl = if decl.contains("link_name") {
+                Self::postprocess_decl(&decl)
+            } else {
+                decl
+            };
             let _ =
                 fs::write(&decl_file, decl).log_err(&format!("write {}", decl_file.display()))?;
         }
@@ -955,6 +961,14 @@ r#"// 对应__attribute__((weak))弱链接符号.
         }
         visit_file(&mut visitor, &ast);
         Ok(visitor.0)
+    }
+
+    // 对decl_文件内容进行后处理，只把属性键 link_name 替换成 export_name，
+    // 并将匹配锚定到属性语法，避免误改字符串/注释中的 `link_name =` 文本。
+    fn postprocess_decl(content: &str) -> String {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| Regex::new(r"(#\[\s*)link_name\b(\s*=)").unwrap());
+        re.replace_all(content, "${1}export_name$2").into_owned()
     }
 
     // 获取File对应的mod目录名
@@ -2253,5 +2267,30 @@ pub struct MyStruct {
 
         // Second weak "foo" should be removed
         assert_eq!(feature.files[1].iter().len(), 0);
+    }
+
+    #[test]
+    fn test_postprocess_decl_replaces_link_name_attribute_key() {
+        let content = r#"#[link_name = "foo"]"#;
+        assert_eq!(
+            Feature::postprocess_decl(content),
+            r#"#[export_name = "foo"]"#
+        );
+    }
+
+    #[test]
+    fn test_postprocess_decl_does_not_replace_link_name_in_string_value() {
+        // The attribute key is replaced but the string literal value is unchanged.
+        let content = r#"#[link_name = "link_name"]"#;
+        assert_eq!(
+            Feature::postprocess_decl(content),
+            r#"#[export_name = "link_name"]"#
+        );
+    }
+
+    #[test]
+    fn test_postprocess_decl_no_link_name() {
+        let content = r#"#[export_name = "foo"]"#;
+        assert_eq!(Feature::postprocess_decl(content), r#"#[export_name = "foo"]"#);
     }
 }
