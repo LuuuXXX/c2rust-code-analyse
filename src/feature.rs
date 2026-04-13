@@ -954,12 +954,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
             }
         }
         visit_file(&mut visitor, &ast);
-        let re = Regex::new(r"link_name\s*=").unwrap();
-        Ok(visitor
-            .0
-            .into_iter()
-            .map(|(k, v)| (k, re.replace_all(&v, "export_name =").into_owned()))
-            .collect())
+        Ok(visitor.0)
     }
 
     // 获取File对应的mod目录名
@@ -1326,11 +1321,58 @@ r#"// 对应__attribute__((weak))弱链接符号.
             fs::read_to_string(decl_file).log_err(&format!("read {}", decl_file.display()))?;
         let mut item: syn::ForeignItemStatic = syn::parse_str(&content)
             .log_err(&format!("parse {} -> {content}", decl_file.display()))?;
+
+        if Self::should_preserve_static_array_type(static_item, &item.ty) {
+            return Ok(false);
+        }
+
         if !Self::syn_equal(&item.ty, &static_item.ty) {
             core::mem::swap(&mut item.ty, &mut static_item.ty);
             return Ok(true);
         }
         Ok(false)
+    }
+
+    fn should_preserve_static_array_type(
+        static_item: &syn::ItemStatic,
+        decl_ty: &syn::Type,
+    ) -> bool {
+        let syn::Type::Array(current_array) = &*static_item.ty else {
+            return false;
+        };
+        let syn::Type::Array(decl_array) = decl_ty else {
+            return false;
+        };
+
+        let Some(init_len) = Self::extract_expr_array_len(&static_item.expr) else {
+            return false;
+        };
+        let Some(current_len) = Self::extract_const_usize(&current_array.len) else {
+            return false;
+        };
+        let Some(decl_len) = Self::extract_const_usize(&decl_array.len) else {
+            return false;
+        };
+
+        current_len == init_len && decl_len != init_len
+    }
+
+    fn extract_expr_array_len(expr: &syn::Expr) -> Option<usize> {
+        match expr {
+            syn::Expr::Repeat(repeat) => Self::extract_const_usize(&repeat.len),
+            syn::Expr::Array(array) => Some(array.elems.len()),
+            _ => None,
+        }
+    }
+
+    fn extract_const_usize(expr: &syn::Expr) -> Option<usize> {
+        let syn::Expr::Lit(expr_lit) = expr else {
+            return None;
+        };
+        let syn::Lit::Int(lit_int) = &expr_lit.lit else {
+            return None;
+        };
+        lit_int.base10_parse::<usize>().ok()
     }
 
     fn validate_var(
@@ -2211,48 +2253,5 @@ pub struct MyStruct {
 
         // Second weak "foo" should be removed
         assert_eq!(feature.files[1].iter().len(), 0);
-    }
-
-    #[test]
-    fn test_get_ffi_decl_static_uses_export_name_fn_unaffected() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_dir = temp_dir.path();
-
-        // A minimal mod.normalized containing both a foreign static (with link_name attr)
-        // and a foreign function.  The static's full item span includes the attribute;
-        // the function only exposes its sig span (no attributes).
-        let content = r#"extern "C" {
-    #[allow(warnings)]
-    #[link_name = "my_var"]
-    pub static mut my_var: i32;
-    fn link_name(x: i32) -> i32;
-}
-"#;
-        fs::write(mod_dir.join("mod.normalized"), content).unwrap();
-
-        let decls = Feature::get_ffi_decl(mod_dir).unwrap();
-
-        // Static decl: link_name attribute key replaced with export_name.
-        let static_decl = decls.get("my_var").expect("my_var decl missing");
-        assert!(
-            static_decl.contains("export_name ="),
-            "static decl should contain export_name =, got: {static_decl}"
-        );
-        assert!(
-            !static_decl.contains("link_name ="),
-            "static decl should not contain link_name =, got: {static_decl}"
-        );
-
-        // Function decl: only the sig span is captured (no attributes), so the
-        // identifier `link_name` must not be rewritten even though it matches the word.
-        let fn_decl = decls.get("link_name").expect("link_name fn decl missing");
-        assert!(
-            fn_decl.contains("link_name"),
-            "fn ident should be preserved as link_name, got: {fn_decl}"
-        );
-        assert!(
-            !fn_decl.contains("export_name"),
-            "fn decl should not contain export_name, got: {fn_decl}"
-        );
     }
 }
