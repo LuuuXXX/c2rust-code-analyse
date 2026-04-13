@@ -712,6 +712,12 @@ r#"// 对应__attribute__((weak))弱链接符号.
                     .unwrap()
             }
 
+            fn foreign_static_attrs(name: &str) -> Vec<syn::Attribute> {
+                syn::Attribute::parse_outer
+                    .parse_str(&format!("#[allow(warnings)]\n#[export_name = \"{}\"]", name))
+                    .unwrap()
+            }
+
             fn normalize_item_const(&mut self, item: &mut syn::Item) {
                 let syn::Item::Const(c) = item else {
                     return;
@@ -759,7 +765,7 @@ r#"// 对应__attribute__((weak))弱链接符号.
 
             fn visit_foreign_item_static_mut(&mut self, item: &mut syn::ForeignItemStatic) {
                 let name = item.ident.to_string();
-                item.attrs = Self::foreign_item_attrs(&name);
+                item.attrs = Self::foreign_static_attrs(&name);
                 if name.starts_with("_c2rust_private_") {
                     let new_name = name.splitn(5, '_').last().unwrap();
                     item.ident = syn::Ident::new(new_name, item.ident.span());
