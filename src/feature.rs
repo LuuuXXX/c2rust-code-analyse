@@ -948,17 +948,18 @@ r#"// 对应__attribute__((weak))弱链接符号.
                     } else if let syn::ForeignItem::Static(ref item) = item {
                         let name = item.ident.to_string();
                         let range = item.span().byte_range();
-                        let decl = Regex::new(r"link_name")
-                            .unwrap()
-                            .replace_all(&self.1[range], "export_name")
-                            .into_owned();
-                        self.0.insert(name, decl);
+                        self.0.insert(name, self.1[range].to_string());
                     }
                 }
             }
         }
         visit_file(&mut visitor, &ast);
-        Ok(visitor.0)
+        let re = Regex::new(r"\blink_name\b").unwrap();
+        Ok(visitor
+            .0
+            .into_iter()
+            .map(|(k, v)| (k, re.replace_all(&v, "export_name").into_owned()))
+            .collect())
     }
 
     // 获取File对应的mod目录名
