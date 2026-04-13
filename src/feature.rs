@@ -964,11 +964,11 @@ r#"// 对应__attribute__((weak))弱链接符号.
     }
 
     // 对decl_文件内容进行后处理，只把属性键 link_name 替换成 export_name，
-    // 避免误改字符串字面量中的符号名（如 #[link_name = "link_name"]）。
+    // 并将匹配锚定到属性语法，避免误改字符串/注释中的 `link_name =` 文本。
     fn postprocess_decl(content: &str) -> String {
         static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r"\blink_name\b(\s*=)").unwrap());
-        re.replace_all(content, "export_name$1").into_owned()
+        let re = RE.get_or_init(|| Regex::new(r"(#\[\s*)link_name\b(\s*=)").unwrap());
+        re.replace_all(content, "${1}export_name$2").into_owned()
     }
 
     // 获取File对应的mod目录名
