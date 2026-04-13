@@ -954,7 +954,12 @@ r#"// 对应__attribute__((weak))弱链接符号.
             }
         }
         visit_file(&mut visitor, &ast);
-        Ok(visitor.0)
+        let re = Regex::new(r"link_name\s*=").unwrap();
+        Ok(visitor
+            .0
+            .into_iter()
+            .map(|(k, v)| (k, re.replace_all(&v, "export_name =").into_owned()))
+            .collect())
     }
 
     // 获取File对应的mod目录名
@@ -2206,5 +2211,48 @@ pub struct MyStruct {
 
         // Second weak "foo" should be removed
         assert_eq!(feature.files[1].iter().len(), 0);
+    }
+
+    #[test]
+    fn test_get_ffi_decl_static_uses_export_name_fn_unaffected() {
+        let temp_dir = TempDir::new().unwrap();
+        let mod_dir = temp_dir.path();
+
+        // A minimal mod.normalized containing both a foreign static (with link_name attr)
+        // and a foreign function.  The static's full item span includes the attribute;
+        // the function only exposes its sig span (no attributes).
+        let content = r#"extern "C" {
+    #[allow(warnings)]
+    #[link_name = "my_var"]
+    pub static mut my_var: i32;
+    fn link_name(x: i32) -> i32;
+}
+"#;
+        fs::write(mod_dir.join("mod.normalized"), content).unwrap();
+
+        let decls = Feature::get_ffi_decl(mod_dir).unwrap();
+
+        // Static decl: link_name attribute key replaced with export_name.
+        let static_decl = decls.get("my_var").expect("my_var decl missing");
+        assert!(
+            static_decl.contains("export_name ="),
+            "static decl should contain export_name =, got: {static_decl}"
+        );
+        assert!(
+            !static_decl.contains("link_name ="),
+            "static decl should not contain link_name =, got: {static_decl}"
+        );
+
+        // Function decl: only the sig span is captured (no attributes), so the
+        // identifier `link_name` must not be rewritten even though it matches the word.
+        let fn_decl = decls.get("link_name").expect("link_name fn decl missing");
+        assert!(
+            fn_decl.contains("link_name"),
+            "fn ident should be preserved as link_name, got: {fn_decl}"
+        );
+        assert!(
+            !fn_decl.contains("export_name"),
+            "fn decl should not contain export_name, got: {fn_decl}"
+        );
     }
 }
